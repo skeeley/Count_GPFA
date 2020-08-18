@@ -5,7 +5,7 @@ from __future__ import print_function
 import time
 import matplotlib.pyplot as plt
 import matplotlib
-import GP_fourier as gpf 
+import GPFourier as gpf 
 import random as rand
 
 
@@ -34,17 +34,6 @@ def make_cov(N, len_sc):
   K = 1*np.exp(-(np.square(M1)/(2*np.square(len_sc))))
   return K
 
-def zero_to_nan(values):
-  """Replace every 0 with 'nan' and return a copy."""
-  return [float('nan') if x==0 else x for x in values]
-
-def softplus(x):
-    ''' safe version of sofplus operation'''
-    lt_34 = (x >= 34)
-    gt_n37 = (x <= -36.8)
-    neither_nor = np.logical_not(np.logical_or(lt_34, gt_n37))
-    rval = np.where(gt_n37, 0., x)
-    return np.where(neither_nor, np.log(1 + np.exp(x)), rval)
 
 def compute_chebyshev(f,xlim,power=2,dx=0.01):
     """
@@ -192,9 +181,11 @@ def gen_marg_negbino(y_train, params,n_latents,n_neurons, coeffs, a1y, a0y, a1, 
   else:
     sigma_inv =2*D*scale*a2W.T@W +  2*a2W.T@np.multiply(summedy, np.eye(N*n_neurons))@W  +block_diag(Cinv, n_latents)
 
-  sigma = np.linalg.inv(sigma_inv)
+  #sigma = np.linalg.inv(sigma_inv)
 
-  mutot = np.squeeze(sigma@W.T@(np.squeeze(summedy)- np.squeeze(D*a1.T*scale) - np.squeeze(a1y)))
+  second = W.T@(np.squeeze(summedy)- np.squeeze(D*a1.T*scale) - np.squeeze(a1y))
+  mutot = np.squeeze(np.linalg.solve(sigma_inv,second))
+
 
   logl = np.squeeze((1/2)*mutot.T@(sigma_inv)@mutot)
 
@@ -231,8 +222,9 @@ def gen_marg_bino(y_train, params,n_latents,n_neurons, coeffs, N, D, count):
   else:
     sigma_inv = 2*a2W.T@W + block_diag(Cinv, n_latents)
 
-  sigma = np.linalg.inv(sigma_inv)
-  mutot = np.squeeze(sigma@W.T@(summedy - countvec.T - (countvec*a1).T))
+  #sigma = np.linalg.inv(sigma_inv)
+  second =W.T@(summedy - countvec.T - (countvec*a1).T)
+  mutot = np.squeeze(np.linalg.solve(sigma_inv,second))
 
   logl = np.squeeze((1/2)*mutot.T@(sigma_inv)@mutot)
 
@@ -245,15 +237,15 @@ def gen_marg_bino(y_train, params,n_latents,n_neurons, coeffs, N, D, count):
 
   return -(neglogpost+logl)
 
-def gen_marg_poiss(y_train, params,n_latents,n_neurons, coeffs, N, D):
+def gen_marg_poiss(y_train, params,n_latents,n_neurons, coeffs,a1, N, D):
 
   len_sc, loadings = unpack_params(params)
-  D = np.shape(y_train)[0]
+  #D = np.shape(y_train)[0]
 
-  summedy = np.sum(y_train, axis = 0)
-  summedy = np.reshape(summedy, [np.size(summedy),-1]) #THIS PART DOESN"T WORK FOR LOTS OF NEURONS
+  # summedy = np.sum(y_train, axis = 0)
+  # summedy = np.reshape(summedy, [np.size(summedy),-1]) #THIS PART DOESN"T WORK FOR LOTS OF NEURONS
 
-  a1 = np.array([np.repeat(coeffs.T[1],N)])
+  
 
   a2W = coeffs.T[2]*loadings
   a2W = (np.kron(a2W, np.eye(N)).T)
@@ -261,7 +253,7 @@ def gen_marg_poiss(y_train, params,n_latents,n_neurons, coeffs, N, D):
 
 
   #cdiag = gpf.mkcovs.mkcovdiag_ASD_wellcond(init_len_sc+0, np.ones(np.size(init_len_sc)), nxcirc, wwnrm = wwnrm,addition = 1e-7).T 
-  C = [make_cov(N, i) + 1e-8*np.eye(N) for i in len_sc]
+  C = [make_cov(N, i) + 1e-7*np.eye(N) for i in len_sc]
   #all_cdiag = np.reshape(cdiag.T,np.size(init_len_sc)*N_four,-1)
   Cinv = [np.linalg.inv(C[i]) for i in np.arange(n_latents)]
 
@@ -270,8 +262,13 @@ def gen_marg_poiss(y_train, params,n_latents,n_neurons, coeffs, N, D):
   else:
     sigma_inv = 2*D*a2W.T@W + block_diag(Cinv, n_latents)
 
-  sigma = np.linalg.inv(sigma_inv)
-  mutot = np.squeeze(sigma@W.T@(summedy- D*a1.T))
+
+
+
+  second = W.T@(summedy- D*a1.T)
+  mutot = np.squeeze(np.linalg.solve(sigma_inv,second))
+  #sigma = np.linalg.inv(sigma_inv)
+  #mutot = np.squeeze(sigma@W.T@(summedy- D*a1.T))
 
   logl = np.squeeze((1/2)*mutot.T@(sigma_inv)@mutot)
 
@@ -286,19 +283,18 @@ def gen_marg_poiss(y_train, params,n_latents,n_neurons, coeffs, N, D):
   return -(neglogpost+logl)
 
 def prep_opt(y_train, N, coeffs):
-	summedy_mat = np.sum(y_train, axis = 0)  
-	summedy = np.reshape(summedy_mat, [np.size(summedy_mat),-1]) 
+  summedy_mat = np.sum(y_train, axis = 0)  
+  summedy = np.reshape(summedy_mat, [np.size(summedy_mat),-1]) 
 
-	a1 = np.reshape([np.repeat(coeffs.T[1],N)], [np.size(summedy),-1])
-	a0 = np.reshape([np.repeat(coeffs.T[0],N)], [np.size(summedy),-1])
-	a1y = np.multiply(a1, summedy)
-	a0y = np.multiply(a0, summedy)
+  a1 = np.reshape([np.repeat(coeffs.T[1],N)], [np.size(summedy),-1])
+  a0 = np.reshape([np.repeat(coeffs.T[0],N)], [np.size(summedy),-1])
+  a1y = np.multiply(a1, summedy)
+  a0y = np.multiply(a0, summedy)
 
-	consts = np.sum(gammaln(y_train + scale)) - D*n_neurons*N*gammaln(scale) - np.sum(coeffs.T[0]*(D*scale*N)) -np.sum(a0y) - np.sum(summedy*np.log(scale))
+  consts = np.sum(gammaln(y_train + scale)) - D*n_neurons*N*gammaln(scale) - np.sum(coeffs.T[0]*(D*scale*N)) -np.sum(a0y) - np.sum(summedy*np.log(scale))
 
 
-	return summedy, a1y, a0y, a1, consts
-
+  return summedy, a1y, a0y, a1, consts
 
 #######data generation #####
 
@@ -345,28 +341,32 @@ marg_over_scale = np.zeros(len(scrange))
 
 tee = time.time()
 
-
 ##outer loop (for possible scale est in neg bino)
-#k = 0
-#for i in scrange: #sweep over scale for negative binomial
+# k = 0
+# for i in scrange: #sweep over scale for negative binomial
 
-## negbino
-# nonlin_center = [[np.log(i*(np.exp(j)-1))-2, np.log(i*(np.exp(j)-1))+2] for j in average_rates]##negbino
-# f = lambda x: np.log(1+(1/i)*np.exp(x))
-# coeffs = np.array([compute_chebyshev(f,i,power=2,dx=0.01) for i in nonlin_center])
-# summedy, a1y, a0y, a1, consts= prep_opt(y_train, N, coeffs)
-# objective  =  lambda params : gen_marg_negbino(y_train, params,n_latents,n_neurons, coeffs, a1y, a0y, a1, summedy, N, consts, scale = i)
+# ## negbino
+  # nonlin_center = [[np.log(i*(np.exp(j)-1))-2, np.log(i*(np.exp(j)-1))+2] for j in average_rates]##negbino
+  # f = lambda x: np.log(1+(1/i)*np.exp(x))
+  # coeffs = np.array([compute_chebyshev(f,i,power=2,dx=0.01) for i in nonlin_center])
+  # summedy, a1y, a0y, a1, consts= prep_opt(y_train, N, coeffs)
+  # objective  =  lambda params : gen_marg_negbino(y_train, params,n_latents,n_neurons, coeffs, a1y, a0y, a1, summedy, N, consts, scale = i)
 
 
 
 ##bino
 
-nonlin_center = [[-4, 4]for j in average_rates/scale]##negbino
+nonlin_center = [[-np.log(((1/average_rates[j])-1))-4, -np.log(((1/average_rates[j])-1))+4]for j in np.arange(n_neurons)]##negbino
 f = lambda x: np.log(1+np.exp(-x))
 coeffs = np.array([compute_chebyshev(f,i,power=2,dx=0.01) for i in nonlin_center])
+#coeffs[:,0] = np.zeros([1,20])
+#coeffs[:,1] = np.ones([1,20])
+#coeffs[:,2] = np.zeros([1,20])
+
 y_train_bino = np.sum(y_train, axis = 0)
 y_train_bino = np.reshape(y_train_bino, [1, n_neurons, N])
-maxD = np.squeeze(np.max(y_train_bino, axis = 2))
+maxD = np.max(np.max(y_train_bino, axis = 2))
+maxD = maxD*np.ones(n_neurons)
 
 objective  =  lambda params : gen_marg_bino(y_train_bino, params,n_latents,n_neurons, coeffs,  N, 1, maxD)
 
@@ -375,21 +375,25 @@ objective  =  lambda params : gen_marg_bino(y_train_bino, params,n_latents,n_neu
 # f = np.exp
 # nonlin_center = [[np.log(i)-2, np.log(i)+2 ] for i in average_rates]
 # coeffs = np.array([compute_chebyshev(f,i,power=2,dx=0.01) for i in nonlin_center])
-# objective  =  lambda params : gen_marg_poiss(y_train, params, n_latents, n_neurons, coeffs, N,D)
+# summedy = np.sum(y_train, axis = 0)
+# summedy = np.reshape(summedy, [np.size(summedy),-1]) #THIS PART DOESN"T WORK FOR LOTS OF NEURONS
+# a1 = np.array([np.repeat(coeffs.T[1],N)])
+# objective  =  lambda params : gen_marg_poiss(summedy, params, n_latents, n_neurons, coeffs,a1, N,D)
 
-
-
-##maginal optimization
+# ##maginal optimization
 h_bar = minimize(value_and_grad(objective), inits, jac=True, method='L-BFGS-B', bounds = len_bounds+bounds)
+print(h_bar.fun, i, h_bar.x)
+#marg_over_scale[0] = h_bar.fun
 
-#marg_over_scale[k] = h_bar.fun ### for possible outer-loop scale estimate for negative binomial
-#k = k+1
+
+
+
+
 
 
 
 marg_opt_time = time.time()-tee
-print("time for the marginal optimization is ", marg_opt_time)
-
+print("PAL marg op time is", marg_opt_time)
 
 
 
@@ -565,16 +569,12 @@ loadings_map = h_bar.x[n_latents:]
 
 loadings_map = np.reshape(loadings_map, [n_latents, n_neurons])
 t = 1
-scale_hat = scale
 init_params = np.zeros([N_four*n_latents])
 
 
 
 cdiag = gpf.mkcovs.mkcovdiag_ASD_wellcond(lensc_map, 1, nxcirc, wwnrm = wwnrm,addition = 1e-7).T
 cdiag = np.reshape(cdiag.T,N_four*n_latents,-1)
-#map_opt = lambda samples : -log_prob_negbino(samples, t, loadings_map, len_sc, y_train, D, N, scale_hat,Bffts[0],cdiag)
-#map_opt = lambda samples : -log_prob_poiss(samples, t, loadings_map,  y_train, D, N, Bffts[0],cdiag)
-
 
 y_train_bino = np.reshape(y_train_bino, [1, n_neurons, N])
 maxD = np.squeeze(np.max(y_train_bino, axis = 2))
