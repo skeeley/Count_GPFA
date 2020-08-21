@@ -2,7 +2,7 @@ import autograd.numpy as np
 import warnings
 
 from . import fft_ops as rffb
-import tensorflow as tf
+
 
 def mkcovdiag_ASD(len_sc,rho,nxcirc,wvec= None,wwnrm= None):
 #  Eigenvalues of ASD covariance (as diagonalized in Fourier domain)

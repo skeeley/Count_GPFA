@@ -67,7 +67,7 @@ def compute_chebyshev(f,xlim,power=2,dx=0.01):
 
     # compute weighted least squares solution minimizes difference between f and approximation of f
     fx = f(xx)
-    what_cheby = np.linalg.lstsq(Bx.T @ Dx @ Bx,Bx.T @ Dx @ fx)[0]
+    what_cheby = np.linalg.lstsq(Bx.T @ Dx @ Bx,Bx.T @ Dx @ fx, rcond = None)[0]
     fhat_cheby = Bx @ what_cheby
 
     # return weights
@@ -171,7 +171,7 @@ def gen_marg_negbino(y_train, params,n_latents,n_neurons, coeffs, a1y, a0y, a1, 
 
 
   #cdiag = gpf.mkcovs.mkcovdiag_ASD_wellcond(init_len_sc+0, np.ones(np.size(init_len_sc)), nxcirc, wwnrm = wwnrm,addition = 1e-7).T 
-  C = [make_cov(N, i) + 1e-7*np.eye(N) for i in len_sc]
+  C = [make_cov(N, i) + 1e-8*np.eye(N) for i in len_sc]
   #all_cdiag = np.reshape(cdiag.T,np.size(init_len_sc)*N_four,-1)
   Cinv = [np.linalg.inv(C[i]) for i in np.arange(n_latents)]
 
@@ -199,7 +199,7 @@ def gen_marg_negbino(y_train, params,n_latents,n_neurons, coeffs, a1y, a0y, a1, 
 
 def gen_marg_bino(y_train, params,n_latents,n_neurons, coeffs, N, D, count):
 
-  len_sc, loadings = unpack_params(params)
+  len_sc, W = unpack_params(params)
 
 
   summedy = np.sum(y_train, axis = 0)
@@ -207,24 +207,59 @@ def gen_marg_bino(y_train, params,n_latents,n_neurons, coeffs, N, D, count):
   a1 = np.array([np.repeat(coeffs.T[1],N)])
   countvec = np.array([np.repeat(count,N)])
 
-  a2W = (count*coeffs.T[2])*loadings
-  a2W = (np.kron(a2W, np.eye(N)).T)
-  W = (np.kron(loadings, np.eye(N)).T)
+  na2W = (count*coeffs.T[2])*W
+  quad = 2*na2W@W.T
+
+  #a2W = (np.kron(a2W, np.eye(N)).T)
+  #W = (np.kron(loadings, np.eye(N)).T)
 
 
   #cdiag = gpf.mkcovs.mkcovdiag_ASD_wellcond(init_len_sc+0, np.ones(np.size(init_len_sc)), nxcirc, wwnrm = wwnrm,addition = 1e-7).T 
   C = [make_cov(N, i) + 1e-7*np.eye(N) for i in len_sc]
+
   #all_cdiag = np.reshape(cdiag.T,np.size(init_len_sc)*N_four,-1)
   Cinv = [np.linalg.inv(C[i]) for i in np.arange(n_latents)]
 
   if n_latents is 1:
-    sigma_inv = 2*a2W.T@W + Cinv[0]
+    sigma_inv = Cinv[0]
   else:
-    sigma_inv = 2*a2W.T@W + block_diag(Cinv, n_latents)
+    sigma_inv = np.kron(quad, np.eye(N)) + block_diag(Cinv,n_latents)
+
 
   #sigma = np.linalg.inv(sigma_inv)
-  second =W.T@(summedy - countvec.T - (countvec*a1).T)
+  Wkron = np.kron(W, np.eye(N))
+
+  second =Wkron@(summedy - countvec.T - (countvec*a1).T)
   mutot = np.squeeze(np.linalg.solve(sigma_inv,second))
+
+  ###########################
+  # len_sc, loadings = unpack_params(params)
+
+
+  # summedy = np.sum(y_train, axis = 0)
+  # summedy = np.reshape(summedy, [np.size(summedy),-1]) 
+  # a1 = np.array([np.repeat(coeffs.T[1],N)])
+  # countvec = np.array([np.repeat(count,N)])
+
+  # a2W = (count*coeffs.T[2])*loadings
+  # a2W = (np.kron(a2W, np.eye(N)).T)
+  # W = (np.kron(loadings, np.eye(N)).T)
+
+
+  # #cdiag = gpf.mkcovs.mkcovdiag_ASD_wellcond(init_len_sc+0, np.ones(np.size(init_len_sc)), nxcirc, wwnrm = wwnrm,addition = 1e-7).T 
+  # C = [make_cov(N, i) + 1e-7*np.eye(N) for i in len_sc]
+  # #all_cdiag = np.reshape(cdiag.T,np.size(init_len_sc)*N_four,-1)
+  # Cinv = [np.linalg.inv(C[i]) for i in np.arange(n_latents)]
+
+  # if n_latents is 1:
+  #   sigma_inv = 2*a2W.T@W + Cinv[0]
+  # else:
+  #   sigma_inv = 2*a2W.T@W + block_diag(Cinv, n_latents)
+
+  # sigma = np.linalg.inv(sigma_inv)
+  # mutot = np.squeeze(sigma@W.T@(summedy - countvec.T - (countvec*a1).T))
+  ##############################
+
 
   logl = np.squeeze((1/2)*mutot.T@(sigma_inv)@mutot)
 
@@ -300,13 +335,15 @@ def prep_opt(y_train, N, coeffs):
 
 ##params##
 N = 200  # number of data points
-D = 50# number of trials (batch size)
-n_neurons = 20
+D = 30# number of trials (batch size)
+n_neurons = 40
 n_latents = 2
 scale = 1 #use 3 for bino, otherwise, just use 1.  This will make sure overall rates are approx the same
 loadings = (np.random.rand(n_latents,n_neurons)) #sometimes this distribution matters for recoverability, keeping random numbers between 0 and 1 is a good option
-len_sc = [60,15]#GP length scale (number of latents)
+len_sc = [60,15]#GP length scale (number of latents in length)
 
+if np.size(len_sc) != n_latents:
+  raise ValueError("the len_sc vector must be the same number of elements as n_latents")
 
 
 #generate fake data
@@ -339,6 +376,8 @@ scrange = np.arange(1,1.1,3)
 marg_over_scale = np.zeros(len(scrange))
 
 
+print("starting PAL marginal optimization for randomly generated data....\n")
+print("number of neurons", n_neurons,"\nnumber of latents", n_latents)
 tee = time.time()
 
 ##outer loop (for possible scale est in neg bino)
@@ -382,7 +421,7 @@ objective  =  lambda params : gen_marg_bino(y_train_bino, params,n_latents,n_neu
 
 # ##maginal optimization
 h_bar = minimize(value_and_grad(objective), inits, jac=True, method='L-BFGS-B', bounds = len_bounds+bounds)
-print(h_bar.fun, i, h_bar.x)
+
 #marg_over_scale[0] = h_bar.fun
 
 
@@ -393,7 +432,7 @@ print(h_bar.fun, i, h_bar.x)
 
 
 marg_opt_time = time.time()-tee
-print("PAL marg op time is", marg_opt_time)
+print("PAL marg op time is", round(marg_opt_time, 4), "seconds")
 
 
 
@@ -577,7 +616,8 @@ cdiag = gpf.mkcovs.mkcovdiag_ASD_wellcond(lensc_map, 1, nxcirc, wwnrm = wwnrm,ad
 cdiag = np.reshape(cdiag.T,N_four*n_latents,-1)
 
 y_train_bino = np.reshape(y_train_bino, [1, n_neurons, N])
-maxD = np.squeeze(np.max(y_train_bino, axis = 2))
+maxD = np.max(np.max(y_train_bino, axis = 2))
+maxD = maxD*np.ones(n_neurons)
 
 map_opt = lambda samples : -log_prob_bino(samples, t, loadings_map, y_train, maxD,  N, Bffts[0],cdiag)
 
