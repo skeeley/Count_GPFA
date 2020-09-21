@@ -104,7 +104,7 @@ def build_toy_dataset_FA(N, D,loadings, len_sc,  poiss_noise = False, Gauss_nois
 
   # add whatever noise you like. 
 	if Gauss_noise is True:  
-		raise Exception("FIX THIS FIRST!")
+		#raise Exception("check this")
 		y = latents + [np.random.normal(0.0, np.sqrt(scale), size=N) for batch in range(D)]
 
 	elif poiss_noise is True:
@@ -138,11 +138,13 @@ def block_diag(Cinv, n_latents):
 	'''
 	supported only for equal sized matrices
 
-  supported currently up to latent dimension size of 3, can do more
+  supported currently up to latent dimension size of 3, can do more but must hard-code.
 
   Though these lines are not good coding practice, autograd does not
   support inserting into a pre-allocated matrix. These matrices are thus
   all built from scratch.
+
+  Jax supports block diag matrix construction.... possible moving to jax from autograd in the future.
 	'''
 	zeroarray = np.zeros(np.shape(Cinv[0]))
 	if n_latents is 2:
@@ -232,34 +234,6 @@ def gen_marg_bino(y_train, params,n_latents,n_neurons, coeffs, N, D, count):
   second =Wkron@(summedy - countvec.T - (countvec*a1).T)
   mutot = np.squeeze(np.linalg.solve(sigma_inv,second))
 
-  ###########################
-  # len_sc, loadings = unpack_params(params)
-
-
-  # summedy = np.sum(y_train, axis = 0)
-  # summedy = np.reshape(summedy, [np.size(summedy),-1]) 
-  # a1 = np.array([np.repeat(coeffs.T[1],N)])
-  # countvec = np.array([np.repeat(count,N)])
-
-  # a2W = (count*coeffs.T[2])*loadings
-  # a2W = (np.kron(a2W, np.eye(N)).T)
-  # W = (np.kron(loadings, np.eye(N)).T)
-
-
-  # #cdiag = gpf.mkcovs.mkcovdiag_ASD_wellcond(init_len_sc+0, np.ones(np.size(init_len_sc)), nxcirc, wwnrm = wwnrm,addition = 1e-7).T 
-  # C = [make_cov(N, i) + 1e-7*np.eye(N) for i in len_sc]
-  # #all_cdiag = np.reshape(cdiag.T,np.size(init_len_sc)*N_four,-1)
-  # Cinv = [np.linalg.inv(C[i]) for i in np.arange(n_latents)]
-
-  # if n_latents is 1:
-  #   sigma_inv = 2*a2W.T@W + Cinv[0]
-  # else:
-  #   sigma_inv = 2*a2W.T@W + block_diag(Cinv, n_latents)
-
-  # sigma = np.linalg.inv(sigma_inv)
-  # mutot = np.squeeze(sigma@W.T@(summedy - countvec.T - (countvec*a1).T))
-  ##############################
-
 
   logl = np.squeeze((1/2)*mutot.T@(sigma_inv)@mutot)
 
@@ -273,19 +247,11 @@ def gen_marg_bino(y_train, params,n_latents,n_neurons, coeffs, N, D, count):
   return -(neglogpost+logl)
 
 def gen_marg_poiss(y_train, params,n_latents,n_neurons, coeffs,a1, N, D):
+  len_sc, W = unpack_params(params)
 
-  len_sc, loadings = unpack_params(params)
-  #D = np.shape(y_train)[0]
 
-  # summedy = np.sum(y_train, axis = 0)
-  # summedy = np.reshape(summedy, [np.size(summedy),-1]) #THIS PART DOESN"T WORK FOR LOTS OF NEURONS
-
-  
-
-  a2W = coeffs.T[2]*loadings
-  a2W = (np.kron(a2W, np.eye(N)).T)
-  W = (np.kron(loadings, np.eye(N)).T)
-
+  Da2W = (D*coeffs.T[2])*W
+  quad = 2*Da2W@W.T
 
   #cdiag = gpf.mkcovs.mkcovdiag_ASD_wellcond(init_len_sc+0, np.ones(np.size(init_len_sc)), nxcirc, wwnrm = wwnrm,addition = 1e-7).T 
   C = [make_cov(N, i) + 1e-7*np.eye(N) for i in len_sc]
@@ -295,15 +261,15 @@ def gen_marg_poiss(y_train, params,n_latents,n_neurons, coeffs,a1, N, D):
   if n_latents is 1:
     sigma_inv = 2*D*a2W.T@W + Cinv[0]
   else:
-    sigma_inv = 2*D*a2W.T@W + block_diag(Cinv, n_latents)
+    sigma_inv = np.kron(quad, np.eye(N))+ block_diag(Cinv, n_latents)
+    #sigma_inv = 2*D*a2W.T@W + block_diag(Cinv, n_latents)
+  Wkron = np.kron(W, np.eye(N))
 
 
-
-
-  second = W.T@(summedy- D*a1.T)
+  second = Wkron@(y_train- D*a1.T)
   mutot = np.squeeze(np.linalg.solve(sigma_inv,second))
   #sigma = np.linalg.inv(sigma_inv)
-  #mutot = np.squeeze(sigma@W.T@(summedy- D*a1.T))
+  #mutot = np.squeeze(sigma@W.T@(y_train- D*a1.T))
 
   logl = np.squeeze((1/2)*mutot.T@(sigma_inv)@mutot)
 
@@ -313,7 +279,6 @@ def gen_marg_poiss(y_train, params,n_latents,n_neurons, coeffs,a1, N, D):
     logdetC = logdetC -(1/2)*np.linalg.slogdet(C[i])[1]
 
   neglogpost = logdetC + -(1/2)*np.linalg.slogdet(sigma_inv)[1]
-
 
   return -(neglogpost+logl)
 
@@ -332,7 +297,6 @@ def prep_opt(y_train, N, coeffs):
   return summedy, a1y, a0y, a1, consts
 
 #######data generation #####
-
 ##params##
 N = 200  # number of data points
 D = 30# number of trials (batch size)
@@ -346,8 +310,8 @@ if np.size(len_sc) != n_latents:
   raise ValueError("the len_sc vector must be the same number of elements as n_latents")
 
 
-#generate fake data
-x_train, y_train, latents = build_toy_dataset_FA(N,D, loadings, len_sc, bino_noise = True,scale=scale)
+#generate fake data (select proper count observation)
+x_train, y_train, latents = build_toy_dataset_FA(N,D, loadings, len_sc, poiss_noise = True,scale=scale)
 
 
 
@@ -395,29 +359,29 @@ tee = time.time()
 
 ##bino
 
-nonlin_center = [[-np.log(((1/average_rates[j])-1))-4, -np.log(((1/average_rates[j])-1))+4]for j in np.arange(n_neurons)]##negbino
-f = lambda x: np.log(1+np.exp(-x))
-coeffs = np.array([compute_chebyshev(f,i,power=2,dx=0.01) for i in nonlin_center])
-#coeffs[:,0] = np.zeros([1,20])
-#coeffs[:,1] = np.ones([1,20])
-#coeffs[:,2] = np.zeros([1,20])
+# nonlin_center = [[-np.log(((1/average_rates[j])-1))-4, -np.log(((1/average_rates[j])-1))+4]for j in np.arange(n_neurons)]##negbino
+# f = lambda x: np.log(1+np.exp(-x))
+# coeffs = np.array([compute_chebyshev(f,i,power=2,dx=0.01) for i in nonlin_center])
+# #coeffs[:,0] = np.zeros([1,20])
+# #coeffs[:,1] = np.ones([1,20])
+# #coeffs[:,2] = np.zeros([1,20])
 
-y_train_bino = np.sum(y_train, axis = 0)
-y_train_bino = np.reshape(y_train_bino, [1, n_neurons, N])
-maxD = np.max(np.max(y_train_bino, axis = 2))
-maxD = maxD*np.ones(n_neurons)
+# y_train_bino = np.sum(y_train, axis = 0)
+# y_train_bino = np.reshape(y_train_bino, [1, n_neurons, N])
+# maxD = np.max(np.max(y_train_bino, axis = 2))
+# maxD = maxD*np.ones(n_neurons)
 
-objective  =  lambda params : gen_marg_bino(y_train_bino, params,n_latents,n_neurons, coeffs,  N, 1, maxD)
+# objective  =  lambda params : gen_marg_bino(y_train_bino, params,n_latents,n_neurons, coeffs,  N, 1, maxD)
 
 
 ## poiss
-# f = np.exp
-# nonlin_center = [[np.log(i)-2, np.log(i)+2 ] for i in average_rates]
-# coeffs = np.array([compute_chebyshev(f,i,power=2,dx=0.01) for i in nonlin_center])
-# summedy = np.sum(y_train, axis = 0)
-# summedy = np.reshape(summedy, [np.size(summedy),-1]) #THIS PART DOESN"T WORK FOR LOTS OF NEURONS
-# a1 = np.array([np.repeat(coeffs.T[1],N)])
-# objective  =  lambda params : gen_marg_poiss(summedy, params, n_latents, n_neurons, coeffs,a1, N,D)
+f = np.exp
+nonlin_center = [[np.log(i)-2, np.log(i)+2 ] for i in average_rates]
+coeffs = np.array([compute_chebyshev(f,i,power=2,dx=0.01) for i in nonlin_center])
+summedy = np.sum(y_train, axis = 0)
+summedy = np.reshape(summedy, [np.size(summedy),-1]) #THIS PART DOESN"T WORK FOR LOTS OF NEURONS
+a1 = np.array([np.repeat(coeffs.T[1],N)])
+objective  =  lambda params : gen_marg_poiss(summedy, params, n_latents, n_neurons, coeffs,a1, N,D)
 
 # ##maginal optimization
 h_bar = minimize(value_and_grad(objective), inits, jac=True, method='L-BFGS-B', bounds = len_bounds+bounds)
@@ -596,10 +560,6 @@ nxc_ext = 0.2
 N_four = Bffts[0].shape[0]
 
 
-#### RANDOM (OR ZERO)######
-#loadings_map = 2*np.random.rand(n_latents,n_neurons)/n_latents
-#lensc_map =100* np.random.rand(n_latents)
-
 
 #### MAP#####
 lensc_map = h_bar.x[:n_latents]
@@ -619,7 +579,10 @@ y_train_bino = np.reshape(y_train_bino, [1, n_neurons, N])
 maxD = np.max(np.max(y_train_bino, axis = 2))
 maxD = maxD*np.ones(n_neurons)
 
-map_opt = lambda samples : -log_prob_bino(samples, t, loadings_map, y_train, maxD,  N, Bffts[0],cdiag)
+
+#map_opt = lambda samples : -log_prob_bino(samples, t, loadings_map, y_train, maxD,  N, Bffts[0],cdiag)
+#map_opt = lambda samples : -log_prob_negbino(samples, t, loadings_map, y_train, D,  N, Bffts[0],cdiag)
+map_opt = lambda samples : -log_prob_poiss(samples, t, loadings_map,  y_train, D, N, Bffts[0], cdiag)
 
 minst = minimize(value_and_grad(map_opt), init_params, jac=True, method='L-BFGS-B',  options={'maxiter': 4000})
 
@@ -650,12 +613,12 @@ for i in np.arange(row*column):
   plt.bar(np.arange(N),hist,color = 'k', alpha =.2)
 
 
-  #plt.plot(np.exp(data_recon[i]),'b') ### for poisson and negative binomial
-  #plt.plot(x_train[i],'g', alpha = .5)
+  plt.plot(np.exp(data_recon[i]),'b') ### for poisson and negative binomial
+  plt.plot(x_train[i],'g', alpha = .5)
 
 
-  plt.plot(maxD[i]*sigmoid(data_recon[i])/D, 'r') #### for Binomial
-  plt.plot(scale*x_train[i],'g', alpha = .5) #### for Binomial
+  # plt.plot(maxD[i]*sigmoid(data_recon[i])/D, 'r') #### for Binomial
+  # plt.plot(scale*x_train[i],'g', alpha = .5) #### for Binomial
 
 
   #plt.plot(np.arange(N),hist2,color = 'r', alpha =.5)
